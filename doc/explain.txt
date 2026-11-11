@@ -36,6 +36,7 @@ every tour. Requires Neovim 0.10+.
 :Explain highlights Hide or show the band fill; bars and labels stay.
 :Explain next       Go to the next step.
 :Explain prev       Go to the previous step.
+:Explain send       Resend the current step's last question via on_question.
 
 ==============================================================================
 3. KEYS                                                        *explain-keys*
@@ -76,6 +77,27 @@ mode, q or <Esc> in normal mode cancels.
 <
 Set a key to false to skip it. `nudge = false` stops explain from typing a
 wake-up line into the agent's herdr pane when you write.
+
+Custom agent connections                              *explain-on_question*
+Set `on_question` to send questions through your own agent connection:
+>lua
+  require("explain").setup({
+    on_question = function(question)
+      -- Send to the agent you selected in your editor.
+      -- Return false, "reason" if there is no connection.
+    end,
+    keymaps = { send = "<leader>ke" },
+  })
+<
+The callback receives url, tour_id, step_id, seq, kind, text, title, path,
+start_line and end_line. It runs once for each human submission, including
+questions on a selection and tours created without a Herdr pane. It replaces
+the built-in wake-up message. Agent answers never call it.
+
+Tell the agent to POST {step_id, text} to <url>tools/reply. The answer then
+appears in the same thread. The callback may return false and a reason, or
+raise an error: the question stays saved and explain shows a warning.
+After reconnecting, :Explain send retries without adding another message.
 
                                                        *explain.statusline()*
 require("explain").statusline() returns `◆ explain :PORT · N new` while

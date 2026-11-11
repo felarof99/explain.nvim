@@ -270,4 +270,72 @@ cases["a timed-out long-poll does not swallow the next nudge"] = function()
   explain.stop()
 end
 
+cases["custom sender works without a pane and agent answers stay in the thread"] = function()
+  fresh()
+  local questions, nudges = {}, {}
+  explain.setup({
+    on_question = function(question) questions[#questions + 1] = question end,
+    nudge = { delay_ms = 10, run = function(argv) nudges[#nudges + 1] = argv end },
+  })
+  local path, dir = h.file(h.numbered(10), "init.lua")
+  vim.cmd.cd(dir)
+  local url = explain.start()
+  local tour_id = post(url, "create_tour", { title = "No legacy pane" }, "").structuredContent.tour_id
+  local step_id = post(url, "add_step", {
+    tour_id = tour_id, path = path, start_line = 3, end_line = 5, title = "Entry", note = "First call.",
+  }, "").structuredContent.step_id
+  explain.next()
+  explain.reply()
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "How does {line} work?" })
+  vim.cmd.stopinsert()
+  press("<CR>")
+  h.eq(1, #questions)
+  local question = questions[1]
+  h.eq({ url, tour_id, step_id, path, 3, 5, "How does {line} work?" }, {
+    question.url, question.tour_id, question.step_id, question.path,
+    question.start_line, question.end_line, question.text,
+  })
+  post(url, "reply", { step_id = step_id, text = "It expands the current line." }, "")
+  local tour = post(url, "get_tour", { tour_id = tour_id }, "").structuredContent
+  h.eq("It expands the current line.", tour.steps[1].messages[2].text)
+  h.eq(1, #questions, "agent answers do not send another question")
+  vim.wait(40)
+  h.eq({}, nudges, "custom sender replaces legacy wake-up")
+  explain.stop()
+end
+
+cases["failed delivery keeps the question and send retries without duplicating it"] = function()
+  fresh()
+  local attempts, connected, throwing = {}, false, false
+  explain.setup({
+    nudge = false,
+    on_question = function(question)
+      attempts[#attempts + 1] = question
+      if throwing then error("broken connection") end
+      if not connected then return false, "Select an agent first" end
+      return true
+    end,
+  })
+  local path, dir = h.file(h.numbered(10), "init.lua")
+  vim.cmd.cd(dir)
+  vim.cmd.edit(path)
+  local url = explain.start()
+  explain.ask({ start_line = 2, end_line = 4 })
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "Explain this selection" })
+  vim.cmd.stopinsert()
+  press("<CR>")
+  h.contains(_G.notifications[#_G.notifications], "question saved, but not sent: Select an agent first")
+  h.eq("question", attempts[1].kind)
+  h.eq({ 2, 4 }, { attempts[1].start_line, attempts[1].end_line })
+  throwing = true
+  h.eq(false, explain.send())
+  h.contains(_G.notifications[#_G.notifications], "broken connection")
+  throwing, connected = false, true
+  vim.cmd("Explain send")
+  h.eq(3, #attempts)
+  h.eq(attempts[1].seq, attempts[3].seq, "retry uses the original question")
+  h.eq(1, #post(url, "read_messages", {}, "").structuredContent.messages, "thread has one question")
+  explain.stop()
+end
+
 return cases

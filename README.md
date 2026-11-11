@@ -59,6 +59,9 @@ Active only while explain runs.
 Options, the agent API and highlight groups are in `:help explain`; internals in
 [docs/architecture.md](docs/architecture.md).
 
+Use `on_question` to deliver questions through an editor-selected agent connection;
+`:Explain send` retries the current question after reconnecting. See `:help explain-on_question`.
+
 The server binds only 127.0.0.1 under a random path, so treat the URL like a
 session token.
 

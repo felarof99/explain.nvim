@@ -33,10 +33,14 @@ local defaults = {
     panel = "<leader>kp",
     tours = "<leader>kt",
     highlights = "<leader>kh",
+    send = false,
   },
   -- Wake an idle agent through its herdr pane when you write. `false` disables;
   -- a table is passed to the nudge (delay_ms, run) and exists for tests.
   nudge = true,
+  -- A custom transport for human questions. Replaces the Herdr nudge, including
+  -- for tours without a pane. Return false, reason when delivery cannot start.
+  on_question = false,
 }
 
 local config = vim.deepcopy(defaults)
@@ -104,6 +108,31 @@ local function schedule_render()
   end)
 end
 
+local function send_question(step, message)
+  if not config.on_question then
+    notify("no question sender configured", vim.log.levels.WARN)
+    return false
+  end
+  local first, last = state.session:_range(step)
+  local ok, sent, err = pcall(config.on_question, {
+    url = state.server.url,
+    tour_id = step.tour_id,
+    step_id = step.id,
+    seq = message.seq,
+    kind = message.kind,
+    text = message.text,
+    title = step.title,
+    path = step.path,
+    start_line = first,
+    end_line = last,
+  })
+  if not ok or sent == false then
+    notify("question saved, but not sent: " .. tostring(ok and err or sent), vim.log.levels.WARN)
+    return false
+  end
+  return true
+end
+
 local function on_event(event)
   if event.type == "tour_created" then
     local tour = state.session.tour_by_id[event.tour_id]
@@ -118,6 +147,8 @@ local function on_event(event)
     local step = state.session.step_by_id[event.step_id]
     if event.author == "agent" and (event.step_id ~= state.view.step_id or not state.panel:is_open()) then
       notify(("%s replied on %q"):format(state.session.tour_by_id[step.tour_id].agent or "agent", step.title))
+    elseif event.author == "human" and config.on_question then
+      send_question(step, step.messages[#step.messages])
     elseif event.author == "human" and event.needs_nudge and state.nudge then
       -- No cursor hint: nudges are debounced, and a cursor taken from the
       -- latest message would skip earlier ones. The agent keeps its own.
@@ -239,6 +270,21 @@ function M.reply()
   end)
 end
 
+---Resends the current step's most recent question through the custom transport.
+function M.send()
+  local step = state and state.session.step_by_id[state.view.step_id]
+  if step then
+    for index = #step.messages, 1, -1 do
+      local message = step.messages[index]
+      if message.author == "human" then
+        return send_question(step, message)
+      end
+    end
+  end
+  notify("no question on the current step", vim.log.levels.WARN)
+  return false
+end
+
 ---Asks a question about lines of the current buffer (the visual selection
 ---when called from the keymap). The question becomes a step after the one
 ---you are on.
@@ -352,6 +398,7 @@ local function set_keymaps()
   map("n", keys.panel, M.toggle_panel, "toggle panel")
   map("n", keys.tours, M.pick_tour, "pick tour")
   map("n", keys.highlights, M.toggle_highlights, "toggle highlights")
+  map("n", keys.send, M.send, "resend question")
 end
 
 ---Starts serving (or re-copies the line when already running) and returns the URL.
@@ -495,6 +542,7 @@ function M.command(args)
     highlights = M.toggle_highlights,
     next = M.next,
     prev = M.prev,
+    send = M.send,
   }
   local action = actions[sub]
   if not action then
@@ -503,6 +551,6 @@ function M.command(args)
   action()
 end
 
-M.subcommands = { "start", "stop", "url", "panel", "tours", "highlights", "next", "prev" }
+M.subcommands = { "start", "stop", "url", "panel", "tours", "highlights", "next", "prev", "send" }
 
 return M
